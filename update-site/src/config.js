@@ -1,29 +1,53 @@
 import { createSupabaseClient } from './supabase.js';
 
 export async function fetchConfig() {
-  const supabase = createSupabaseClient();
+  const supabase = await createSupabaseClient();
   
-  const { data, error } = await supabase
-    .from('app_config')
-    .select('*')
-    .eq('id', 'main')
-    .single();
-
-  if (error) {
-    throw new Error(`Config fetch failed: ${error.message}`);
+  // Fail-open: if supabase client not available, return default config
+  if (!supabase) {
+    console.warn('[Config] Supabase client unavailable, using default config');
+    return getDefaultConfig();
   }
+  
+  try {
+    const { data, error } = await supabase
+      .from('app_config')
+      .select('*')
+      .eq('id', 'main')
+      .single();
 
-  if (!data) {
-    throw new Error('App config not found');
+    if (error) {
+      console.warn('[Config] Supabase query error:', error.message);
+      return getDefaultConfig();
+    }
+
+    if (!data) {
+      console.warn('[Config] App config not found in Supabase');
+      return getDefaultConfig();
+    }
+
+    return {
+      minimumVersion: data.minimum_version,
+      latestVersion: data.latest_version,
+      downloadUrl: data.download_url,
+      forceUpdate: data.force_update,
+      updateMessage: data.update_message,
+      updatedAt: data.updated_at,
+    };
+  } catch (err) {
+    console.warn('[Config] Fetch failed:', err);
+    return getDefaultConfig();
   }
+}
 
+function getDefaultConfig() {
   return {
-    minimumVersion: data.minimum_version,
-    latestVersion: data.latest_version,
-    downloadUrl: data.download_url,
-    forceUpdate: data.force_update,
-    updateMessage: data.update_message,
-    updatedAt: data.updated_at,
+    minimumVersion: '1.0.0',
+    latestVersion: '1.0.0',
+    downloadUrl: '/downloads/KargomNerede.apk',
+    forceUpdate: false,
+    updateMessage: 'Yeni bir sürüm mevcut. Lütfen güncelleyin.',
+    updatedAt: new Date().toISOString(),
   };
 }
 
