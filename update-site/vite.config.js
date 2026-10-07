@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   root: '.',
   publicDir: 'public',
+  base: '/KargomNerede/',
   build: {
     outDir: '../build/update-site',
     emptyOutDir: true,
