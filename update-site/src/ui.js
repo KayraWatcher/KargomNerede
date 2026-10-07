@@ -220,20 +220,36 @@ function handleDownload(event) {
   const btn = event.currentTarget;
   const url = btn.dataset.url;
   
-  if (url) {
-    const a = document.createElement('a');
-    // Resolve relative URLs against current page base
-    if (!url.startsWith('http')) {
-      // If URL is relative, ensure it's resolved correctly
-      a.href = url;
-    } else {
-      a.href = url;
-    }
-    a.download = 'KargomNerede.apk';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  if (!url) {
+    alert('İndirme bağlantısı bulunamadı.');
+    return;
   }
+
+  // If URL is relative, check if file exists before downloading
+  if (!url.startsWith('http')) {
+    fetch(url, { method: 'HEAD' })
+      .then(res => {
+        if (res.ok) {
+          triggerDownload(url);
+        } else {
+          alert('APK dosyası henüz yayınlanmadı. Lütfen daha sonra tekrar deneyin.');
+        }
+      })
+      .catch(() => {
+        alert('APK dosyası kontrol edilemedi. Lütfen daha sonra tekrar deneyin.');
+      });
+  } else {
+    triggerDownload(url);
+  }
+}
+
+function triggerDownload(url) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'KargomNerede.apk';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 function formatDate(dateString) {
