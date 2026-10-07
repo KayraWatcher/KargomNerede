@@ -1,0 +1,42 @@
+{
+  "name": "kargom-nerede-backend",
+  "version": "1.0.0",
+  "description": "KargomNerede Backend API",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src/**/*.ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "dotenv": "^16.4.5",
+    "firebase-admin": "^12.2.0",
+    "ioredis": "^5.4.1",
+    "pg": "^8.12.0",
+    "drizzle-orm": "^0.31.2",
+    "zod": "^3.23.8",
+    "axios": "^1.7.2",
+    "bullmq": "^5.8.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^20.14.2",
+    "@types/pg": "^8.11.6",
+    "typescript": "^5.4.5",
+    "tsx": "^4.15.1",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.14.0",
+    "@typescript-eslint/parser": "^7.14.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.12",
+    "ts-jest": "^29.1.4"
+  }
+}

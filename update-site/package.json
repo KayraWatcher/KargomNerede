@@ -1,0 +1,17 @@
+{
+  "name": "kargom-nerede-update-site",
+  "version": "1.0.0",
+  "description": "KargomNerede Update & Download Site",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

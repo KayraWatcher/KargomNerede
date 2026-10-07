@@ -1,0 +1,11 @@
+targets:
+  $default:
+    builders:
+      riverpod_generator:
+        enabled: false
+      freezed:
+        enabled: false
+      json_serializable:
+        enabled: false
+      drift_dev:
+        enabled: false

@@ -1,0 +1,106 @@
+name: kargom_nerede
+description: "KargomNerede - Kapsamlı kargo takip uygulaması"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # UI & Design
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+  flutter_animate: ^4.5.0
+  shimmer: ^3.0.0
+  cached_network_image: ^3.4.1
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Navigation
+  go_router: ^14.6.2
+
+  # Network
+  dio: ^5.7.0
+  connectivity_plus: ^6.1.0
+
+  # Supabase
+  supabase_flutter: ^2.5.6
+
+  # Local Database
+  # drift: ^2.28.2
+  # sqlite3_flutter_libs: ^0.5.42
+  path_provider: ^2.1.6
+  path: ^1.9.1
+  shared_preferences: ^2.2.3
+
+  # Code Generation
+  freezed_annotation: ^3.0.0
+  json_annotation: ^4.9.0
+  riverpod_generator: ^2.6.5
+  build_runner: ^2.4.13
+  # drift_dev: ^2.28.0
+  freezed: ^3.0.0
+  json_serializable: ^6.9.0
+
+  # Security & Storage
+  flutter_secure_storage: ^9.2.4
+  encrypt: ^5.0.3
+
+  # Notifications
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.5
+  flutter_local_notifications: ^18.0.1
+  timezone: ^0.9.4
+
+  # Utilities
+  intl: ^0.20.3
+  uuid: ^4.5.1
+  equatable: ^2.0.5
+  url_launcher: ^6.3.1
+  share_plus: ^10.1.0
+  package_info_plus: ^8.1.1
+  device_info_plus: ^11.1.1
+
+  # Background Tasks
+  # workmanager: ^0.5.2 (commented out due to compatibility issues)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  custom_lint: ^0.7.2
+  riverpod_lint: ^2.6.5
+  analyzer: ^7.6.0
+  build: ^2.5.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icons/app_icon.png"
+  adaptive_icon_background: "#0D1B2A"
+  adaptive_icon_foreground: "assets/icons/app_icon.png"
+  min_sdk_android: 21
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/icons/
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
