@@ -44,7 +44,7 @@ function getDefaultConfig() {
   return {
     minimumVersion: '1.0.0',
     latestVersion: '1.0.0',
-    downloadUrl: '/downloads/KargomNerede.apk',
+    downloadUrl: 'downloads/KargomNerede.apk',
     forceUpdate: false,
     updateMessage: 'Yeni bir sürüm mevcut. Lütfen güncelleyin.',
     updatedAt: new Date().toISOString(),

@@ -46,19 +46,11 @@ function getErrorHTML(error, onRetry) {
 }
 
 function getAppHTML(config) {
-  const downloadUrl = config?.download_url || '/downloads/KargomNerede.apk';
-  const latestVersion = config?.latest_version || '1.0.0';
-  const updatedAt = config?.updated_at ? formatDate(config.updated_at) : '—';
+  const downloadUrl = config?.downloadUrl || 'downloads/KargomNerede.apk';
+  const latestVersion = config?.latestVersion || '1.0.0';
+  const updatedAt = config?.updatedAt ? formatDate(config.updatedAt) : '—';
   
   return `
-    <!DOCTYPE html>
-    <html lang="tr">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Kargom Nerede - Android Uygulaması</title>
-    </head>
-    <body>
       <header class="header">
         <div class="container">
           <div class="logo">
@@ -221,8 +213,6 @@ function getAppHTML(config) {
           </div>
         </div>
       </footer>
-    </body>
-    </html>
   `;
 }
 
@@ -231,9 +221,14 @@ function handleDownload(event) {
   const url = btn.dataset.url;
   
   if (url) {
-    // Create a temporary anchor and trigger download
     const a = document.createElement('a');
-    a.href = url;
+    // Resolve relative URLs against current page base
+    if (!url.startsWith('http')) {
+      // If URL is relative, ensure it's resolved correctly
+      a.href = url;
+    } else {
+      a.href = url;
+    }
     a.download = 'KargomNerede.apk';
     document.body.appendChild(a);
     a.click();
