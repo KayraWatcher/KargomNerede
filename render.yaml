@@ -25,7 +25,9 @@ services:
         value: ship24
       - key: TRACKING_SHIP24_API_KEY
         sync: false
-      # Browser allowlist for a future web client (comma separated).
-      # The Flutter app is not a browser and does not need CORS.
+      # Browser allowlist (comma separated). Needed because the website calls
+      # the API from a browser: the GitHub Pages site today, the custom
+      # domain (with www) after DNS cutover. The Flutter app is not a
+      # browser and does not need CORS.
       - key: CORS_ORIGIN
-        value: https://kargomnerede.com
+        value: https://kargomnerede.com,https://www.kargomnerede.com,https://kayrawatcher.github.io

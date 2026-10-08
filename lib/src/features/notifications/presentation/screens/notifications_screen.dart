@@ -4,14 +4,14 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:kargom_nerede/src/core/constants/app_constants.dart';
 import 'package:kargom_nerede/src/core/extensions/extensions.dart';
 import 'package:kargom_nerede/src/shared/widgets/common_widgets.dart';
+import 'package:kargom_nerede/src/features/notifications/data/notification_service.dart';
 
 class NotificationsScreen extends ConsumerWidget {
   const NotificationsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // TODO: Implement notifications from local storage / FCM
-    final notifications = _getMockNotifications();
+    final notifications = ref.watch(notificationProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -19,7 +19,7 @@ class NotificationsScreen extends ConsumerWidget {
         actions: [
           if (notifications.isNotEmpty)
             TextButton(
-              onPressed: () => _clearAllNotifications(context),
+              onPressed: () => _clearAllNotifications(context, ref),
               child: const Text('Tümünü Temizle'),
             ),
         ],
@@ -37,62 +37,21 @@ class NotificationsScreen extends ConsumerWidget {
                 final notification = notifications[index];
                 return _NotificationCard(
                   notification: notification,
-                  onDismiss: () => _dismissNotification(context, index),
+                  onDismiss: () => _dismissNotification(context, ref, notification.id),
                 ).animate().fadeIn(delay: (index * 50).ms).slideX(begin: 0.2);
               },
             ),
     );
   }
 
-  List<_Notification> _getMockNotifications() {
-    return [
-      _Notification(
-        id: '1',
-        title: 'Kargonuz Dağıtıma Çıktı',
-        body: 'Yurtiçi Kargo - 1234567890123 bugün teslim edilecek.',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 30)),
-        type: NotificationType.outForDelivery,
-        shipmentId: 'shipment_1',
-        read: false,
-      ),
-      _Notification(
-        id: '2',
-        title: 'Teslim Edildi',
-        body: 'MNG Kargo - 9876543210 başarıyla teslim edildi.',
-        timestamp: DateTime.now().subtract(const Duration(hours: 2)),
-        type: NotificationType.delivered,
-        shipmentId: 'shipment_2',
-        read: true,
-      ),
-      _Notification(
-        id: '3',
-        title: 'Transfer Merkezinde',
-        body: 'Aras Kargo - 5556667777888 Ankara transfer merkezine ulaştı.',
-        timestamp: DateTime.now().subtract(const Duration(hours: 5)),
-        type: NotificationType.newMovement,
-        shipmentId: 'shipment_3',
-        read: true,
-      ),
-      _Notification(
-        id: '4',
-        title: 'Gecikme Bildirimi',
-        body: 'PTT - RR123456789TR tahmini teslim tarihi geçti.',
-        timestamp: DateTime.now().subtract(const Duration(days: 1)),
-        type: NotificationType.delay,
-        shipmentId: 'shipment_4',
-        read: false,
-      ),
-    ];
-  }
-
-  void _dismissNotification(BuildContext context, int index) {
-    // TODO: Remove from local storage
+  void _dismissNotification(BuildContext context, WidgetRef ref, String id) {
+    ref.read(notificationProvider.notifier).dismiss(id);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Bildirim silindi')),
     );
   }
 
-  void _clearAllNotifications(BuildContext context) {
+  void _clearAllNotifications(BuildContext context, WidgetRef ref) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -106,7 +65,7 @@ class NotificationsScreen extends ConsumerWidget {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              // TODO: Implement actual clearing from local storage
+              ref.read(notificationProvider.notifier).clearAll();
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Tüm bildirimler temizlendi')),
               );
@@ -121,7 +80,7 @@ class NotificationsScreen extends ConsumerWidget {
 }
 
 class _NotificationCard extends StatelessWidget {
-  final _Notification notification;
+  final NotificationItem notification;
   final VoidCallback onDismiss;
 
   const _NotificationCard({
@@ -212,71 +171,45 @@ class _NotificationCard extends StatelessWidget {
     );
   }
 
-  Color _getTypeColor(NotificationType type) {
+  Color _getTypeColor(String type) {
     switch (type) {
-      case NotificationType.newMovement:
+      case 'newMovement':
         return const Color(0xFF2196F3);
-      case NotificationType.arrivedAtFacility:
+      case 'arrivedAtFacility':
         return const Color(0xFF9C27B0);
-      case NotificationType.outForDelivery:
+      case 'outForDelivery':
         return const Color(0xFFFF9800);
-      case NotificationType.delivered:
+      case 'delivered':
         return const Color(0xFF4CAF50);
-      case NotificationType.exception:
+      case 'exception':
         return const Color(0xFFF44336);
-      case NotificationType.delay:
+      case 'delay':
         return const Color(0xFFF44336);
-      case NotificationType.returned:
+      case 'returned':
         return const Color(0xFF795548);
+      default:
+        return const Color(0xFF2196F3);
     }
   }
 
-  IconData _getTypeIcon(NotificationType type) {
+  IconData _getTypeIcon(String type) {
     switch (type) {
-      case NotificationType.newMovement:
+      case 'newMovement':
         return Icons.local_shipping;
-      case NotificationType.arrivedAtFacility:
+      case 'arrivedAtFacility':
         return Icons.factory;
-      case NotificationType.outForDelivery:
+      case 'outForDelivery':
         return Icons.delivery_dining;
-      case NotificationType.delivered:
+      case 'delivered':
         return Icons.check_circle;
-      case NotificationType.exception:
+      case 'exception':
         return Icons.warning;
-      case NotificationType.delay:
+      case 'delay':
         return Icons.schedule;
-      case NotificationType.returned:
+      case 'returned':
         return Icons.undo;
+      default:
+        return Icons.notifications;
     }
   }
-}
-
-class _Notification {
-  final String id;
-  final String title;
-  final String body;
-  final DateTime timestamp;
-  final NotificationType type;
-  final String shipmentId;
-  final bool read;
-
-  _Notification({
-    required this.id,
-    required this.title,
-    required this.body,
-    required this.timestamp,
-    required this.type,
-    required this.shipmentId,
-    required this.read,
-  });
-}
-
-enum NotificationType {
-  newMovement,
-  arrivedAtFacility,
-  outForDelivery,
-  delivered,
-  exception,
-  delay,
-  returned,
 }

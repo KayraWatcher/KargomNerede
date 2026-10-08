@@ -1,34 +1,77 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:kargom_nerede/src/core/constants/app_constants.dart';
+import 'package:kargom_nerede/src/core/errors/app_exceptions.dart';
 import 'package:kargom_nerede/src/core/utils/app_utils.dart';
 import 'package:kargom_nerede/src/core/extensions/extensions.dart';
 import 'package:kargom_nerede/src/shared/models/shipment.dart';
 import 'package:kargom_nerede/src/shared/models/carrier.dart';
 import 'package:kargom_nerede/src/shared/widgets/common_widgets.dart';
+import 'package:kargom_nerede/src/features/shipments/data/tracking_api.dart';
 import 'package:kargom_nerede/src/features/shipments/presentation/providers/shipment_providers.dart';
 
-final _trackingControllerProvider = StateProvider<TextEditingController>((ref) => TextEditingController());
-final _nameControllerProvider = StateProvider<TextEditingController>((ref) => TextEditingController());
-final _detectedCarrierCodeProvider = StateProvider<String?>((ref) => null);
-final _selectedCarrierProvider = StateProvider<Carrier?>((ref) => null);
-final _isDetectingProvider = StateProvider<bool>((ref) => false);
-final _showCarrierSelectionProvider = StateProvider<bool>((ref) => false);
-
-class AddShipmentScreen extends ConsumerWidget {
+/// Add shipment screen.
+///
+/// Focus/input state lives in [State] (never in `build`), so every rebuild
+/// caused by carrier detection keeps the same controller, focus node and form
+/// key - typing can never close the keyboard or reset the field.
+class AddShipmentScreen extends ConsumerStatefulWidget {
   const AddShipmentScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final formKey = GlobalKey<FormState>();
-    final trackingController = ref.watch(_trackingControllerProvider);
-    final nameController = ref.watch(_nameControllerProvider);
-    final detectedCarrierCode = ref.watch(_detectedCarrierCodeProvider);
-    final selectedCarrier = ref.watch(_selectedCarrierProvider);
-    final isDetecting = ref.watch(_isDetectingProvider);
-    final showCarrierSelection = ref.watch(_showCarrierSelectionProvider);
+  ConsumerState<AddShipmentScreen> createState() => _AddShipmentScreenState();
+}
+
+class _AddShipmentScreenState extends ConsumerState<AddShipmentScreen> {
+  /// Carrier detection runs only after the user stopped typing.
+  static const Duration _detectionDebounce = Duration(milliseconds: 400);
+  static const int _minDetectionLength = 5;
+  static const int _minBackendDetectionLength = 8;
+  static const int _maxBackendDetectionAttempts = 5;
+
+  final TextEditingController _trackingController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
+  final FocusNode _trackingFocusNode = FocusNode();
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final Debouncer _detectionDebouncer = Debouncer(delay: _detectionDebounce);
+
+  /// Incremented for every detection run; a slow result that belongs to an
+  /// older tracking number is dropped instead of overwriting the new one.
+  int _detectionSequence = 0;
+
+  bool _isDetecting = false;
+  bool _detectionCompleted = false;
+  String? _detectedCarrierCode;
+  bool _detectedFromRecord = false;
+  Carrier? _selectedCarrier;
+  bool _showCarrierSelection = false;
+  Shipment? _existingShipment;
+
+  /// True while the real tracking request (`POST /tracking/track`) is running
+  /// - blocks a second tap and is shown on the button.
+  bool _isSaving = false;
+
+  /// Backend detection results (including failures) per normalized number, so
+  /// a tracking number never triggers the same request twice.
+  final Map<String, String?> _backendDetectionCache = {};
+  int _backendDetectionAttempts = 0;
+
+  /// Cancelled on dispose: leaving the screen never leaves a request running.
+  CancelToken? _detectionCancelToken;
+
+  @override
+  void dispose() {
+    _detectionDebouncer.dispose();
+    _detectionCancelToken?.cancel('screen disposed');
+    _trackingController.dispose();
+    _nameController.dispose();
+    _trackingFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final carriersAsync = ref.watch(activeCarriersProvider);
 
     return Scaffold(
@@ -40,17 +83,21 @@ class AddShipmentScreen extends ConsumerWidget {
         ),
       ),
       body: Form(
-        key: GlobalKey<FormState>(), // We can't use a form key easily with ConsumerWidget, so we'll validate manually
+        key: _formKey,
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            _buildTrackingNumberField(context, ref, trackingController),
+            _buildTrackingNumberField(context),
+            if (_existingShipment != null) ...[
+              const SizedBox(height: 16),
+              _buildExistingShipmentCard(context, _existingShipment!),
+            ],
             const SizedBox(height: 24),
-            _buildCarrierSection(context, ref, carriersAsync),
+            _buildCarrierSection(context, carriersAsync),
             const SizedBox(height: 24),
-            _buildCustomNameField(context, ref),
+            _buildCustomNameField(context),
             const SizedBox(height: 32),
-            _buildAddButton(context, ref),
+            _buildAddButton(),
             const SizedBox(height: 16),
             _buildInfoText(context),
           ],
@@ -59,10 +106,11 @@ class AddShipmentScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildTrackingNumberField(BuildContext context, WidgetRef ref, TextEditingController controller) {
-    final isDetecting = ref.watch(_isDetectingProvider);
-    final detectedCarrierCode = ref.watch(_detectedCarrierCodeProvider);
+  // ---------------------------------------------------------------------------
+  // Tracking number
+  // ---------------------------------------------------------------------------
 
+  Widget _buildTrackingNumberField(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -74,25 +122,17 @@ class AddShipmentScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 8),
         TextFormField(
-          controller: controller,
+          controller: _trackingController,
+          focusNode: _trackingFocusNode,
           decoration: InputDecoration(
             hintText: 'Örn: 1234567890123',
             prefixIcon: const Icon(Icons.qr_code),
-            suffixIcon: isDetecting
-                ? const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                : detectedCarrierCode != null
-                    ? Icon(
-                        Icons.check_circle,
-                        color: Colors.green[600],
-                      )
-                    : null,
+            // Fixed size slot: swapping the spinner/check mark never shifts
+            // the field or the content below it.
+            suffixIcon: Padding(
+              padding: const EdgeInsets.all(12),
+              child: _detectionSuffixIcon(),
+            ),
           ),
           validator: (value) {
             if (value == null || value.trim().isEmpty) {
@@ -103,76 +143,215 @@ class AddShipmentScreen extends ConsumerWidget {
             }
             return null;
           },
-          onChanged: (value) {
-            if (value.length >= 8 && !ref.read(_isDetectingProvider)) {
-              _detectCarrier(ref, value);
-            }
-          },
+          onChanged: _onTrackingChanged,
           textInputAction: TextInputAction.next,
+          autocorrect: false,
+          enableSuggestions: false,
+          textCapitalization: TextCapitalization.none,
         ),
-        if (detectedCarrierCode != null && !isDetecting)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.check_circle,
-                  size: 16,
-                  color: Colors.green[600],
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Kargo firması otomatik algılandı',
-                  style: context.textTheme.bodySmall?.copyWith(
-                    color: Colors.green[600],
-                  ),
-                ),
-              ],
-            ),
-          ),
       ],
     );
   }
 
-  Future<void> _detectCarrier(WidgetRef ref, String trackingNumber) async {
-    ref.read(_isDetectingProvider.notifier).state = true;
-    ref.read(_detectedCarrierCodeProvider.notifier).state = null;
-    ref.read(_selectedCarrierProvider.notifier).state = null;
-    ref.read(_showCarrierSelectionProvider.notifier).state = false;
-
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    // Use carrier patterns from AppConstants
-    String? detectedCode;
-    final normalizedTracking = trackingNumber.trim().toUpperCase();
-    
-    for (final entry in AppConstants.carrierPatterns.entries) {
-      for (final pattern in entry.value) {
-        if (pattern.hasMatch(normalizedTracking)) {
-          detectedCode = entry.key;
-          break;
-        }
-      }
-      if (detectedCode != null) break;
+  Widget _detectionSuffixIcon() {
+    if (_isDetecting) {
+      return const SizedBox(
+        width: 20,
+        height: 20,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
     }
-
-    ref.read(_isDetectingProvider.notifier).state = false;
-    ref.read(_detectedCarrierCodeProvider.notifier).state = detectedCode;
-    if (detectedCode != null) {
-      ref.read(_selectedCarrierProvider.notifier).state = _getCarrierByCode(detectedCode!);
+    if (_detectedCarrierCode != null) {
+      return Icon(Icons.check_circle, color: Colors.green[600], size: 20);
     }
-    ref.read(_showCarrierSelectionProvider.notifier).state = detectedCode == null;
+    // Empty, fixed-size placeholder keeps the layout stable.
+    return const SizedBox(width: 20, height: 20);
   }
 
-  Carrier? _getCarrierByCode(String code) {
-    // This would be fetched from the database
-    return null;
+  void _onTrackingChanged(String value) {
+    // Nothing is triggered per keystroke: detection (local lookup, pattern
+    // matching and the optional backend call) happens once the user stopped
+    // typing, so the field keeps focus and the screen does not jump.
+    _detectionDebouncer.run(() => _runDetection(value));
   }
 
-  Widget _buildCarrierSection(BuildContext context, WidgetRef ref, AsyncValue<List<Carrier>> carriersAsync) {
-    final detectedCarrierCode = ref.watch(_detectedCarrierCodeProvider);
-    final selectedCarrier = ref.watch(_selectedCarrierProvider);
-    final showCarrierSelection = ref.watch(_showCarrierSelectionProvider);
+  Future<void> _runDetection(String rawValue) async {
+    final normalized = rawValue.normalizeTrackingNumber();
+    final sequence = ++_detectionSequence;
+
+    if (normalized.length < _minDetectionLength) {
+      if (!mounted || sequence != _detectionSequence) return;
+      setState(() {
+        _isDetecting = false;
+        _detectionCompleted = false;
+        _detectedCarrierCode = null;
+        _detectedFromRecord = false;
+        _existingShipment = null;
+      });
+      return;
+    }
+
+    setState(() => _isDetecting = true);
+
+    // 1) A record saved earlier is the most reliable source: it also carries
+    //    the carrier and the (possibly delivered) history of this number.
+    final repository = ref.read(mockShipmentRepositoryProvider);
+    final existing = await repository.findByTrackingNumber(normalized);
+    if (!mounted || sequence != _detectionSequence) return;
+
+    if (existing != null) {
+      setState(() {
+        _existingShipment = existing;
+        _detectedCarrierCode = existing.carrierCode;
+        _detectedFromRecord = true;
+        _detectionCompleted = true;
+        _isDetecting = false;
+      });
+      return;
+    }
+
+    // 2) Local detection from the number's format (client mirror of
+    //    backend/src/services/carrierDetectionService.ts): a carrier code is
+    //    only accepted when the format matches exactly one known carrier.
+    //    Ambiguous digit formats (e.g. plain 13 digits) return null here.
+    final localCode = AppUtils.detectCarrier(normalized);
+    if (!mounted || sequence != _detectionSequence) return;
+
+    setState(() {
+      _existingShipment = null;
+      _detectedCarrierCode = localCode;
+      _detectedFromRecord = false;
+      _detectionCompleted = true;
+      _isDetecting = false;
+    });
+
+    if (localCode != null) return;
+
+    // 3) Ambiguous or unknown format: ask the backend, which can ask the
+    //    tracking provider. The UI already shows "algılanamadı"; a valid
+    //    backend answer upgrades it, anything else is ignored.
+    final remoteCode = await _detectCarrierViaBackend(normalized);
+    if (!mounted || sequence != _detectionSequence) return;
+    if (remoteCode == null || _detectedCarrierCode != null) return;
+    setState(() {
+      _detectedCarrierCode = remoteCode;
+      _detectedFromRecord = false;
+    });
+  }
+
+  /// Calls the backend's detection endpoint (which may consult the tracking
+  /// provider). Failures are cached, the call is debounced by the caller and
+  /// it never blocks the UI.
+  Future<String?> _detectCarrierViaBackend(String normalized) async {
+    if (_backendDetectionCache.containsKey(normalized)) {
+      return _backendDetectionCache[normalized];
+    }
+    if (normalized.length < _minBackendDetectionLength ||
+        _backendDetectionAttempts >= _maxBackendDetectionAttempts) {
+      return null;
+    }
+
+    _backendDetectionAttempts++;
+    String? code;
+    try {
+      final cancelToken = _detectionCancelToken ??= CancelToken();
+      code = await ref
+          .read(trackingApiProvider)
+          .detectCarrier(normalized, cancelToken: cancelToken);
+    } catch (_) {
+      // Offline / backend unavailable: detection stays "not detected".
+      code = null;
+    }
+
+    _backendDetectionCache[normalized] = code;
+    return code;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Previously tracked shipment
+  // ---------------------------------------------------------------------------
+
+  Widget _buildExistingShipmentCard(BuildContext context, Shipment shipment) {
+    final statusColor = shipment.statusColor;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.history, size: 20, color: Colors.blueGrey[600]),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Bu kargo daha önce takip edilmiş.',
+                  style: context.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                'Durum:',
+                style: context.textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey[600],
+                ),
+              ),
+              Text(
+                shipment.statusDisplayName,
+                style: context.textTheme.bodyMedium?.copyWith(
+                  color: statusColor,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          if (shipment.isDelivered)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Geçmiş kaydınız korunuyor, tekrar eklemeniz gerekmez.',
+                style: context.textTheme.bodySmall?.copyWith(
+                  color: Colors.grey[600],
+                ),
+              ),
+            ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _openExistingShipment(shipment),
+                icon: const Icon(Icons.open_in_new, size: 18),
+                label: const Text('Detayı Aç'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openExistingShipment(Shipment shipment) {
+    if (!context.mounted) return;
+    // Replace this screen so the back button does not return to a form that
+    // is already known to be a duplicate.
+    context.pushReplacement('/detail/${shipment.id}');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Carrier section
+  // ---------------------------------------------------------------------------
+
+  Widget _buildCarrierSection(
+    BuildContext context,
+    AsyncValue<List<Carrier>> carriersAsync,
+  ) {
+    final resolvedCarrier = _resolvedCarrier();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -184,30 +363,66 @@ class AddShipmentScreen extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 8),
-        if (ref.watch(_detectedCarrierCodeProvider) != null && ref.watch(_selectedCarrierProvider) != null)
-          _buildDetectedCarrierCard(context, ref)
-        else if (ref.watch(_showCarrierSelectionProvider))
-          ref.watch(activeCarriersProvider).when(
-            data: (carriers) => _buildCarrierSelection(context, ref, carriers),
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (_, __) => _buildManualCarrierInput(context, ref),
-          )
-        else if (ref.watch(_detectedCarrierCodeProvider) == null)
-          _buildManualCarrierInput(context, ref),
+        if (resolvedCarrier != null) ...[
+          _buildResolvedCarrierCard(context, resolvedCarrier),
+          if (_showCarrierSelection) ...[
+            const SizedBox(height: 12),
+            _buildCarrierPicker(context, carriersAsync),
+          ],
+        ] else if (_isDetecting) ...[
+          Text(
+            'Kargo firması algılanıyor...',
+            style: context.textTheme.bodySmall?.copyWith(
+              color: Colors.grey[600],
+            ),
+          ),
+        ] else if (_detectionCompleted) ...[
+          _buildCarrierNotDetectedNotice(context),
+          const SizedBox(height: 12),
+          _buildCarrierPicker(context, carriersAsync),
+        ] else ...[
+          Text(
+            'Takip numarası yazdığınızda kargo firması otomatik algılanır.',
+            style: context.textTheme.bodySmall?.copyWith(
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
       ],
     );
   }
 
-  Widget _buildDetectedCarrierCard(BuildContext context, WidgetRef ref) {
-    final selectedCarrier = ref.watch(_selectedCarrierProvider);
-    final detectedCarrierCode = ref.watch(_detectedCarrierCodeProvider);
+  /// The carrier that will be saved: a manual selection wins, otherwise the
+  /// detected one. Falls back to a display-only [Carrier] when a record was
+  /// created with a code that is no longer in the registry.
+  Carrier? _resolvedCarrier() {
+    if (_selectedCarrier != null) return _selectedCarrier;
+    final code = _detectedCarrierCode;
+    if (code == null || code.isEmpty) return null;
+    return CarrierRegistry.byCode(code) ??
+        Carrier(
+          code: code,
+          name: _carrierDisplayName(code),
+          logoUrl: '',
+          isActive: true,
+          isTurkishCarrier: true,
+        );
+  }
+
+  Widget _buildResolvedCarrierCard(BuildContext context, Carrier carrier) {
+    final isManual = _selectedCarrier != null;
+    final subtitle = isManual
+        ? 'Manuel seçildi'
+        : _detectedFromRecord
+            ? 'Önceki kayıttan alındı'
+            : '✓ Otomatik algılandı';
 
     return AppCard(
       child: Row(
         children: [
           CarrierAvatar(
-            carrierCode: ref.watch(_selectedCarrierProvider)?.code ?? ref.watch(_detectedCarrierCodeProvider)!,
-            carrierName: ref.watch(_selectedCarrierProvider)?.name,
+            carrierCode: carrier.code,
+            carrierName: carrier.name,
             radius: 24,
           ),
           const SizedBox(width: 12),
@@ -216,26 +431,22 @@ class AddShipmentScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  ref.watch(_selectedCarrierProvider)?.name ?? _formatCarrierName(ref.watch(_detectedCarrierCodeProvider)!),
+                  carrier.name,
                   style: context.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 Text(
-                  '✓ Otomatik algılandı',
+                  subtitle,
                   style: context.textTheme.bodySmall?.copyWith(
-                    color: Colors.green[600],
+                    color: Colors.green[700],
                   ),
                 ),
               ],
             ),
           ),
           TextButton(
-            onPressed: () {
-              ref.read(_showCarrierSelectionProvider.notifier).state = true;
-              ref.read(_selectedCarrierProvider.notifier).state = null;
-              ref.read(_detectedCarrierCodeProvider.notifier).state = null;
-            },
+            onPressed: () => setState(() => _showCarrierSelection = true),
             child: const Text('Değiştir'),
           ),
         ],
@@ -243,65 +454,69 @@ class AddShipmentScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildManualCarrierInput(BuildContext context, WidgetRef ref) {
-    final detectedCarrierCode = ref.watch(_detectedCarrierCodeProvider);
-    
-    return Column(
-      children: [
-        if (detectedCarrierCode == null)
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.orange[50],
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange[200]!),
-            ),
-            child: Row(
+  Widget _buildCarrierNotDetectedNotice(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.orange[50],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange[200]!),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 20, color: Colors.orange[700]),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.info_outline,
-                  size: 20,
-                  color: Colors.orange[700],
+                Text(
+                  'Kargo firması algılanamadı',
+                  style: context.textTheme.bodyMedium?.copyWith(
+                    color: Colors.orange[900],
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Kargo firması otomatik belirlenemedi.',
-                    style: context.textTheme.bodySmall?.copyWith(
-                      color: Colors.orange[800],
-                    ),
+                Text(
+                  'Aşağıdan firmanızı seçebilirsiniz.',
+                  style: context.textTheme.bodySmall?.copyWith(
+                    color: Colors.orange[800],
                   ),
                 ),
               ],
             ),
           ),
-        const SizedBox(height: 8),
-        TextFormField(
-          decoration: InputDecoration(
-            hintText: 'Kargo firmasını seçin veya otomatik algıla',
-            prefixIcon: const Icon(Icons.local_shipping),
-            suffixIcon: IconButton(
-              icon: const Icon(Icons.arrow_drop_down),
-              onPressed: () => ref.read(_showCarrierSelectionProvider.notifier).state = true,
-            ),
-          ),
-          readOnly: true,
-          onTap: () => ref.read(_showCarrierSelectionProvider.notifier).state = true,
-          validator: (value) {
-            if (ref.read(_selectedCarrierProvider) == null && ref.read(_detectedCarrierCodeProvider) == null) {
-              return 'Kargo firması seçilmeli';
-            }
-            return null;
-          },
-        ),
-      ],
+        ],
+      ),
     );
   }
 
-  Widget _buildCarrierSelection(BuildContext context, WidgetRef ref, List<Carrier> carriers) {
-    final selectedCarrier = ref.watch(_selectedCarrierProvider);
+  Widget _buildCarrierPicker(
+    BuildContext context,
+    AsyncValue<List<Carrier>> carriersAsync,
+  ) {
+    return carriersAsync.when(
+      data: (carriers) => _buildCarrierSelection(context, carriers),
+      loading: () => const Center(
+        child: Padding(
+          padding: EdgeInsets.all(8),
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      ),
+      error: (_, _) => Text(
+        'Kargo firması listesi yüklenemedi.',
+        style: context.textTheme.bodySmall?.copyWith(color: Colors.red),
+      ),
+    );
+  }
 
+  Widget _buildCarrierSelection(BuildContext context, List<Carrier> carriers) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Kargo firmasını seçin',
@@ -313,22 +528,26 @@ class AddShipmentScreen extends ConsumerWidget {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: carriers.map((carrier) => _CarrierChip(
-                carrier: carrier,
-                isSelected: ref.watch(_selectedCarrierProvider)?.code == carrier.code,
-                onTap: () => ref.read(_selectedCarrierProvider.notifier).state = carrier,
-              )).toList(),
-        ),
-        const SizedBox(height: 8),
-        TextButton(
-          onPressed: () => _showOtherCarrierDialog(ref),
-          child: const Text('Diğer / Listede yok'),
+          children: carriers
+              .map((carrier) => _CarrierChip(
+                    carrier: carrier,
+                    isSelected: _selectedCarrier?.code == carrier.code,
+                    onTap: () => setState(() {
+                      _selectedCarrier = carrier;
+                      _showCarrierSelection = false;
+                    }),
+                  ))
+              .toList(),
         ),
       ],
     );
   }
 
-  Widget _buildCustomNameField(BuildContext context, WidgetRef ref) {
+  // ---------------------------------------------------------------------------
+  // Name + save
+  // ---------------------------------------------------------------------------
+
+  Widget _buildCustomNameField(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -340,10 +559,10 @@ class AddShipmentScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 8),
         TextFormField(
-          controller: ref.watch(_nameControllerProvider),
-          decoration: InputDecoration(
+          controller: _nameController,
+          decoration: const InputDecoration(
             hintText: 'Örn: Yeni kulaklık, Annemin ayakkabısı...',
-            prefixIcon: const Icon(Icons.label),
+            prefixIcon: Icon(Icons.label),
           ),
           textInputAction: TextInputAction.done,
         ),
@@ -351,13 +570,29 @@ class AddShipmentScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildAddButton(BuildContext context, WidgetRef ref) {
+  Widget _buildAddButton() {
+    final existing = _existingShipment;
+    final saving = _isSaving;
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton.icon(
-        onPressed: () => _saveShipment(context, ref),
-        icon: const Icon(Icons.add),
-        label: const Text('Kargoyu Ekle'),
+        onPressed: saving
+            ? null
+            : existing != null
+                ? () => _openExistingShipment(existing)
+                : _saveShipment,
+        icon: saving
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(existing != null ? Icons.open_in_new : Icons.add),
+        label: Text(saving
+            ? 'Takip bilgisi alınıyor...'
+            : existing != null
+                ? 'Mevcut Kargoyu Aç'
+                : 'Kargoyu Ekle'),
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 16),
         ),
@@ -376,58 +611,95 @@ class AddShipmentScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _saveShipment(BuildContext context, WidgetRef ref) async {
-    final trackingController = ref.read(_trackingControllerProvider);
-    final nameController = ref.read(_nameControllerProvider);
-    final carrierCode = ref.read(_selectedCarrierProvider)?.code ?? ref.read(_detectedCarrierCodeProvider);
-    final carrierName = ref.read(_selectedCarrierProvider)?.name ?? _formatCarrierName(ref.read(_detectedCarrierCodeProvider) ?? '');
+  Future<void> _saveShipment() async {
+    final form = _formKey.currentState;
+    if (form == null || !form.validate()) return;
 
-    if (carrierCode == null) {
+    final trackingNumber = _trackingController.text.normalizeTrackingNumber();
+
+    // Duplicate guard: the same tracking number must never create a second
+    // shipment - the existing record (active or delivered) is used instead.
+    final repository = ref.read(mockShipmentRepositoryProvider);
+    final existing = await repository.findByTrackingNumber(trackingNumber);
+    if (!mounted) return;
+
+    if (existing != null) {
+      setState(() => _existingShipment = existing);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kargo firması seçilmeli')),
+        SnackBar(
+            content: Text(
+                'Bu kargo daha önce takip edilmiş: ${existing.statusDisplayName}')),
+      );
+      _openExistingShipment(existing);
+      return;
+    }
+
+    final carrierCode = _selectedCarrier?.code ?? _detectedCarrierCode;
+    if (carrierCode == null) {
+      setState(() => _showCarrierSelection = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Kargo firması algılanamadı, lütfen firma seçin')),
       );
       return;
     }
 
-    final shipment = Shipment(
-      id: AppUtils.generateId(),
-      trackingNumber: ref.read(_trackingControllerProvider).text.trim().toUpperCase(),
-      carrierCode: carrierCode!,
-      carrierName: carrierName,
-      customName: ref.read(_nameControllerProvider).text.trim().isEmpty ? null : ref.read(_nameControllerProvider).text.trim(),
-      status: 'CREATED',
-      lastUpdate: DateTime.now(),
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-      events: [
-        TrackingEvent(
-          id: AppUtils.generateId(),
-          timestamp: DateTime.now(),
-          status: 'CREATED',
-          description: 'Gönderi takip sistemine eklendi',
-        ),
-      ],
+    // Real tracking: the backend asks the configured tracking provider, so
+    // the status/timeline stored below are provider data - never something
+    // the app made up. On failure the shipment is NOT created and the error
+    // is shown instead.
+    setState(() => _isSaving = true);
+    TrackResult tracked;
+    try {
+      tracked = await ref.read(trackingApiProvider).track(
+            trackingNumber: trackingNumber,
+            carrierCode: carrierCode,
+          );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      final detail = error is AppException ? error.message : '$error';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Takip bilgisi alınamadı: $detail')),
+      );
+      return;
+    }
+    if (!mounted) return;
+
+    final shipment = tracked.toShipment(
+      customName: _nameController.text.trim().isEmpty
+          ? null
+          : _nameController.text.trim(),
     );
 
-    await ref.read(shipmentsProvider.notifier).addShipment(shipment);
+    final stored =
+        await ref.read(shipmentsProvider.notifier).addShipment(shipment);
+    if (!mounted) return;
+    setState(() => _isSaving = false);
 
-    if (context.mounted) {
-      context.pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${shipment.displayName} eklendi'),
-          action: SnackBarAction(
-            label: 'Detay',
-            onPressed: () => context.push('/detail/${shipment.id}'),
-          ),
-        ),
-      );
+    if (stored.id != shipment.id) {
+      // Another record with the same tracking number won the race.
+      setState(() => _existingShipment = stored);
+      _openExistingShipment(stored);
+      return;
     }
+
+    final messenger = ScaffoldMessenger.of(context);
+    final router = GoRouter.of(context);
+    router.pop();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('${shipment.displayName} eklendi'),
+        action: SnackBarAction(
+          label: 'Detay',
+          onPressed: () => router.push('/detail/${shipment.id}'),
+        ),
+      ),
+    );
   }
 
-  void _showOtherCarrierDialog(WidgetRef ref) {
-    // We need a context for showDialog, so we'll need to handle this differently
-    // For now, we'll skip this feature in ConsumerWidget
+  String _carrierDisplayName(String code) {
+    return CarrierRegistry.displayNameOf(code, _formatCarrierName);
   }
 
   String _formatCarrierName(String code) {

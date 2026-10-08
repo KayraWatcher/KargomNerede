@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:kargom_nerede/src/core/constants/app_constants.dart';
 import 'package:kargom_nerede/src/core/extensions/extensions.dart';
+import 'package:kargom_nerede/src/core/routing/app_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
@@ -56,27 +57,29 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     super.dispose();
   }
 
-  void _nextPage() {
+  Future<void> _nextPage() async {
     if (_currentPage < _pages.length - 1) {
-      _pageController.nextPage(
+      await _pageController.nextPage(
         duration: AppConstants.pageTransitionDuration,
         curve: Curves.easeInOutCubic,
       );
     } else {
-      _completeOnboarding();
+      await _completeOnboarding();
     }
   }
 
-  void _completeOnboarding() async {
+  Future<void> _completeOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(AppConstants.keyOnboardingCompleted, true);
+    // Invalidate onboarding provider so router sees updated value
+    ref.invalidate(onboardingCompletedProvider);
     if (mounted) {
       context.go('/');
     }
   }
 
-  void _skipOnboarding() {
-    _completeOnboarding();
+  Future<void> _skipOnboarding() async {
+    await _completeOnboarding();
   }
 
   @override

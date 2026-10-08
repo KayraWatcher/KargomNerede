@@ -52,15 +52,18 @@ function getDefaultConfig() {
 }
 
 export function getDownloadUrl(config) {
+  const base = import.meta.env.BASE_URL || './';
+
   if (!config || !config.downloadUrl) {
-    return '/downloads/KargomNerede.apk';
+    return `${base}downloads/KargomNerede.apk`;
   }
-  
+
   // If it's already a full URL, return as-is
   if (config.downloadUrl.startsWith('http')) {
     return config.downloadUrl;
   }
-  
-  // Otherwise prepend the site origin
-  return `${window.location.origin}${config.downloadUrl}`;
+
+  // Resolve against the site base so the link works both on GitHub Pages
+  // (/KargomNerede/) and on the custom domain root (/).
+  return `${base}${config.downloadUrl.replace(/^\.?\/+/, '')}`;
 }

@@ -3,10 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:kargom_nerede/src/core/constants/app_constants.dart';
+import 'package:kargom_nerede/src/core/errors/app_exceptions.dart';
 import 'package:kargom_nerede/src/core/utils/app_utils.dart';
 import 'package:kargom_nerede/src/core/extensions/extensions.dart';
 import 'package:kargom_nerede/src/shared/models/shipment.dart';
 import 'package:kargom_nerede/src/shared/widgets/common_widgets.dart';
+import 'package:kargom_nerede/src/features/shipments/data/tracking_api.dart';
 import 'package:kargom_nerede/src/features/shipments/presentation/providers/shipment_providers.dart';
 
 final _isEditingNameProvider = StateProvider<bool>((ref) => false);
@@ -85,7 +87,7 @@ class ShipmentDetailScreen extends ConsumerWidget {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () => ref.read(shipmentsProvider.notifier).refresh(),
+        onRefresh: () => _refreshFromProvider(context, ref, shipment),
         child: CustomScrollView(
           slivers: [
             SliverToBoxAdapter(
@@ -101,6 +103,43 @@ class ShipmentDetailScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  /// Pull-to-refresh: re-queries the tracking provider through the backend
+  /// (`POST /tracking/track`) and caches the fresh status/timeline in the
+  /// local repository. The local record is only a cache/history - when the
+  /// backend or provider is unreachable the error is shown and the cached
+  /// record stays untouched.
+  Future<void> _refreshFromProvider(
+    BuildContext context,
+    WidgetRef ref,
+    Shipment shipment,
+  ) async {
+    try {
+      final tracked = await ref.read(trackingApiProvider).track(
+            trackingNumber: shipment.trackingNumber,
+            carrierCode: shipment.carrierCode,
+          );
+      await ref.read(shipmentsProvider.notifier).updateShipment(
+            tracked.toShipment(
+              id: shipment.id,
+              customName: shipment.customName,
+              createdAt: shipment.createdAt,
+            ),
+          );
+      // The detail screen reads its own provider, so make it pick up the
+      // freshly cached record.
+      ref.invalidate(shipmentDetailProvider(shipmentId));
+    } catch (error) {
+      if (context.mounted) {
+        final detail = error is AppException ? error.message : '$error';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Güncelleme alınamadı: $detail')),
+        );
+      }
+    } finally {
+      await ref.read(shipmentsProvider.notifier).refresh();
+    }
   }
 
   Widget _buildLoadingView() {

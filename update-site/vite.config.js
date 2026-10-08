@@ -3,7 +3,10 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   root: '.',
   publicDir: 'public',
-  base: '/KargomNerede/',
+  // Relative base: the same build works on GitHub Pages
+  // (https://kayrawatcher.github.io/KargomNerede/) and later on the custom
+  // domain root (https://kargomnerede.com/) without rebuilding.
+  base: './',
   build: {
     outDir: '../build/update-site',
     emptyOutDir: true,

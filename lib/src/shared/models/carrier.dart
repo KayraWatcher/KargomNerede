@@ -107,3 +107,44 @@ class CarrierDetectionResult {
     this.alternatives = const [],
   });
 }
+
+/// Single source of truth for the carriers supported by the app.
+///
+/// The `code` values are the carrier codes used across the whole stack
+/// (backend `carrierDetectionService`, tracking providers and the local
+/// shipment records), so a detected code always maps back to a real carrier.
+class CarrierRegistry {
+  CarrierRegistry._();
+
+  static const List<Carrier> carriers = [
+    Carrier(code: 'yurtici', name: 'Yurtiçi Kargo', logoUrl: '', isActive: true, isTurkishCarrier: true),
+    Carrier(code: 'mng', name: 'MNG Kargo', logoUrl: '', isActive: true, isTurkishCarrier: true),
+    Carrier(code: 'aras', name: 'Aras Kargo', logoUrl: '', isActive: true, isTurkishCarrier: true),
+    Carrier(code: 'surat', name: 'Sürat Kargo', logoUrl: '', isActive: true, isTurkishCarrier: true),
+    Carrier(code: 'ptt', name: 'PTT', logoUrl: '', isActive: true, isTurkishCarrier: true),
+    Carrier(code: 'trendyol_express', name: 'Trendyol Express', logoUrl: '', isActive: true, isTurkishCarrier: true),
+    Carrier(code: 'hepsijet', name: 'HepsiJet', logoUrl: '', isActive: true, isTurkishCarrier: true),
+    Carrier(code: 'hepsiburada', name: 'Hepsiburada Lojistik', logoUrl: '', isActive: true, isTurkishCarrier: true),
+    Carrier(code: 'n11', name: 'n11 Lojistik', logoUrl: '', isActive: true, isTurkishCarrier: true),
+    Carrier(code: 'ups', name: 'UPS', logoUrl: '', isActive: true, isTurkishCarrier: false),
+    Carrier(code: 'fedex', name: 'FedEx', logoUrl: '', isActive: true, isTurkishCarrier: false),
+    Carrier(code: 'dhl', name: 'DHL', logoUrl: '', isActive: true, isTurkishCarrier: false),
+  ];
+
+  static Carrier? byCode(String? code) {
+    if (code == null || code.isEmpty) return null;
+    for (final carrier in carriers) {
+      if (carrier.code == code) return carrier;
+    }
+    return null;
+  }
+
+  static List<Carrier> get activeCarriers =>
+      carriers.where((carrier) => carrier.isActive).toList();
+
+  /// Display name for a carrier code; falls back to a formatted code so an
+  /// unknown (but backend-detected) code is still readable.
+  static String displayNameOf(String code, String Function(String) formatter) {
+    return byCode(code)?.name ?? formatter(code);
+  }
+}

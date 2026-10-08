@@ -1,18 +1,65 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kargom_nerede/src/shared/models/shipment.dart';
 import 'package:kargom_nerede/src/shared/models/carrier.dart';
 import 'package:kargom_nerede/src/core/utils/app_utils.dart';
 import 'package:kargom_nerede/src/core/extensions/extensions.dart';
 
-// Mock repository for now (database not working due to drift issues)
+/// Local shipment repository.
+///
+/// Shipments are kept in memory and mirrored to [SharedPreferences] so that
+/// the history survives an app restart - a delivered shipment written weeks
+/// ago must still be found when the user types the same tracking number
+/// again (and it must never be duplicated).
 class MockShipmentRepository {
-  final List<Shipment> _shipments = [];
+  static const String _storageKey = 'shipments_v1';
 
-  MockShipmentRepository() {
-    _initializeMockData();
+  final List<Shipment> _shipments = [];
+  late final Future<void> _ready = _initialize();
+
+  Future<void> _initialize() async {
+    final stored = await _readPersisted();
+    if (stored != null && stored.isNotEmpty) {
+      _shipments.addAll(stored);
+      return;
+    }
+    if (stored != null && stored.isEmpty) {
+      // The user deleted every shipment before: do not re-seed demo data.
+      return;
+    }
+    _seedMockData();
   }
 
-  void _initializeMockData() {
+  Future<List<Shipment>?> _readPersisted() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_storageKey);
+      if (raw == null) return null;
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .map((e) => Shipment.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      // Storage unavailable (tests, corrupted data, ...): stay in-memory.
+      return null;
+    }
+  }
+
+  Future<void> _persist() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _storageKey,
+        jsonEncode(_shipments.map((s) => s.toJson()).toList()),
+      );
+    } catch (_) {
+      // Persistence is best effort; the in-memory state stays authoritative.
+    }
+  }
+
+  void _seedMockData() {
     final now = DateTime.now();
     _shipments.addAll([
       Shipment(
@@ -69,11 +116,13 @@ class MockShipmentRepository {
   }
 
   Future<List<Shipment>> getAllShipments() async {
+    await _ready;
     await Future.delayed(const Duration(milliseconds: 300));
     return List.from(_shipments)..sort((a, b) => b.lastUpdate.compareTo(a.lastUpdate));
   }
 
   Future<Shipment?> getShipment(String id) async {
+    await _ready;
     await Future.delayed(const Duration(milliseconds: 100));
     try {
       return _shipments.firstWhere((s) => s.id == id);
@@ -82,22 +131,48 @@ class MockShipmentRepository {
     }
   }
 
-  Future<void> insertShipment(Shipment shipment) async {
+  /// Finds a shipment by its tracking number, ignoring whitespace and case.
+  Future<Shipment?> findByTrackingNumber(String trackingNumber) async {
+    await _ready;
+    final target = trackingNumber.normalizeTrackingNumber();
+    if (target.isEmpty) return null;
+    for (final shipment in _shipments) {
+      if (shipment.trackingNumber.normalizeTrackingNumber() == target) {
+        return shipment;
+      }
+    }
+    return null;
+  }
+
+  /// Inserts [shipment] unless a record with the same tracking number already
+  /// exists. In that case the existing record is returned untouched, so a
+  /// duplicate shipment is never created and the old history is preserved.
+  Future<Shipment> insertShipment(Shipment shipment) async {
+    await _ready;
+    final existing = await findByTrackingNumber(shipment.trackingNumber);
+    if (existing != null) return existing;
+
     await Future.delayed(const Duration(milliseconds: 200));
     _shipments.add(shipment);
+    await _persist();
+    return shipment;
   }
 
   Future<void> updateShipment(Shipment shipment) async {
+    await _ready;
     await Future.delayed(const Duration(milliseconds: 200));
     final index = _shipments.indexWhere((s) => s.id == shipment.id);
     if (index != -1) {
       _shipments[index] = shipment;
+      await _persist();
     }
   }
 
   Future<void> deleteShipment(String id) async {
+    await _ready;
     await Future.delayed(const Duration(milliseconds: 200));
     _shipments.removeWhere((s) => s.id == id);
+    await _persist();
   }
 
   Future<void> addTrackingEvent(String shipmentId, TrackingEvent event) async {
@@ -145,12 +220,16 @@ class ShipmentsNotifier extends StateNotifier<AsyncValue<List<Shipment>>> {
     await loadShipments();
   }
 
-  Future<void> addShipment(Shipment shipment) async {
+  /// Adds [shipment]. When the same tracking number already exists the
+  /// existing record is returned and no duplicate is created.
+  Future<Shipment> addShipment(Shipment shipment) async {
     try {
-      await _repository.insertShipment(shipment);
+      final stored = await _repository.insertShipment(shipment);
       await loadShipments();
+      return stored;
     } catch (e, stack) {
       state = AsyncValue.error(e, stack);
+      return shipment;
     }
   }
 
@@ -214,19 +293,9 @@ final shipmentDetailProvider = FutureProvider.family<Shipment, String>((ref, id)
   return value;
 });
 
+/// Carriers the user can pick from. Backed by [CarrierRegistry] so the list,
+/// the display names and the detection codes stay in sync.
 final activeCarriersProvider = FutureProvider<List<Carrier>>((ref) async {
   await Future.delayed(const Duration(milliseconds: 100));
-  return [
-    Carrier(code: 'yurtici', name: 'Yurtiçi Kargo', logoUrl: '', isActive: true, isTurkishCarrier: true),
-    Carrier(code: 'mng', name: 'MNG Kargo', logoUrl: '', isActive: true, isTurkishCarrier: true),
-    Carrier(code: 'aras', name: 'Aras Kargo', logoUrl: '', isActive: true, isTurkishCarrier: true),
-    Carrier(code: 'surat', name: 'Sürat Kargo', logoUrl: '', isActive: true, isTurkishCarrier: true),
-    Carrier(code: 'ptt', name: 'PTT', logoUrl: '', isActive: true, isTurkishCarrier: true),
-    Carrier(code: 'trendyol_express', name: 'Trendyol Express', logoUrl: '', isActive: true, isTurkishCarrier: true),
-    Carrier(code: 'hepsiburada', name: 'Hepsiburada Lojistik', logoUrl: '', isActive: true, isTurkishCarrier: true),
-    Carrier(code: 'n11', name: 'n11 Lojistik', logoUrl: '', isActive: true, isTurkishCarrier: true),
-    Carrier(code: 'ups', name: 'UPS', logoUrl: '', isActive: true, isTurkishCarrier: false),
-    Carrier(code: 'fedex', name: 'FedEx', logoUrl: '', isActive: true, isTurkishCarrier: false),
-    Carrier(code: 'dhl', name: 'DHL', logoUrl: '', isActive: true, isTurkishCarrier: false),
-  ];
+  return CarrierRegistry.activeCarriers;
 });

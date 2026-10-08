@@ -81,13 +81,23 @@ class TrackingService {
     // Development only: the mock provider is never registered implicitly.
     // Without a configured provider the API fails loudly
     // (503 PROVIDER_NOT_CONFIGURED) instead of returning random data that
-    // looks like a real shipment. Opt in explicitly with TRACKING_PROVIDER=mock.
+    // looks like a real shipment. Opt in explicitly with TRACKING_PROVIDER=mock
+    // in development - production refuses it outright: with
+    // NODE_ENV=production the mock is never registered, so production
+    // tracking can only be a real provider or an explicit 503 error.
     if (process.env.TRACKING_PROVIDER === 'mock') {
-      this.providers.set('mock', {
-        name: 'Mock Provider (Development)',
-        track: this.trackMock.bind(this),
-        getStatus: this.getMockStatus.bind(this),
-      });
+      if (process.env.NODE_ENV === 'production') {
+        console.error(
+          '[tracking] TRACKING_PROVIDER=mock refused: NODE_ENV=production does not allow the mock provider. ' +
+            'Configure a real provider (e.g. TRACKING_PROVIDER=ship24 + TRACKING_SHIP24_API_KEY).'
+        );
+      } else {
+        this.providers.set('mock', {
+          name: 'Mock Provider (Development)',
+          track: this.trackMock.bind(this),
+          getStatus: this.getMockStatus.bind(this),
+        });
+      }
     }
   }
 

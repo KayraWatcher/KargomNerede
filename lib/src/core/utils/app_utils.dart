@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
+import '../constants/app_constants.dart';
+import '../extensions/extensions.dart';
+
 class AppUtils {
   AppUtils._();
 
@@ -23,10 +26,38 @@ class AppUtils {
     return true;
   }
 
+  /// Detects the carrier of [trackingNumber] from its format alone.
+  ///
+  /// Uses the same pattern list as the backend detection service
+  /// (`backend/src/services/carrierDetectionService.ts`) so the app and the
+  /// backend agree on which carriers a number could belong to.
+  ///
+  /// A carrier is returned only when the number matches EXACTLY ONE known
+  /// pattern. Digit-only formats overlap heavily - a 13-digit number matches
+  /// Yurtiçi, Aras, PTT and FedEx; a 10-digit number matches MNG, Aras,
+  /// Sürat and DHL - so those numbers return `null` (ambiguous) and the
+  /// caller must ask the backend/tracking provider, or show
+  /// "Kargo firması algılanamadı" and let the user pick the carrier.
+  /// Ambiguous numbers are never resolved by priority order.
   static String? detectCarrier(String trackingNumber) {
-    // Import patterns from AppConstants
-    // This will be implemented with carrier patterns
-    return null;
+    final clean = trackingNumber.normalizeTrackingNumber();
+    if (clean.length < 5 || clean.length > 50) return null;
+
+    String? matched;
+    for (final entry in AppConstants.carrierPatterns.entries) {
+      for (final pattern in entry.value) {
+        if (pattern.hasMatch(clean)) {
+          if (matched != null && matched != entry.key) {
+            // Several carriers share this format: the format alone does not
+            // identify the sender.
+            return null;
+          }
+          matched = entry.key;
+          break; // next carrier (patterns within a carrier share its code)
+        }
+      }
+    }
+    return matched;
   }
 
   static String formatBytes(int bytes, {int decimals = 2}) {

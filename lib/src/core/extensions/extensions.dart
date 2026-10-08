@@ -59,6 +59,16 @@ extension StringExtensions on String {
   String normalizeForSearch() {
     return removeTurkishChars().toLowerCase().trim();
   }
+
+  /// Normalises a tracking number so the same value always compares equal.
+  ///
+  /// - strips leading/trailing whitespace
+  /// - removes internal whitespace (pasted values often contain spaces)
+  /// - upper-cases the value (`text.toUpperCase()` is how tracking numbers are
+  ///   stored by the app, but users may paste lowercase values)
+  String normalizeTrackingNumber() {
+    return replaceAll(RegExp(r'\s+'), '').toUpperCase();
+  }
 }
 
 extension DateTimeExtensions on DateTime {

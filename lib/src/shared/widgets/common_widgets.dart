@@ -172,6 +172,7 @@ class CarrierAvatar extends StatelessWidget {
       'surat': const Color(0xFFFB8C00),
       'ptt': const Color(0xFF8E24AA),
       'trendyol_express': const Color(0xFFE91E63),
+      'hepsijet': const Color(0xFF1E3A8A),
       'hepsiburada': const Color(0xFF00ACC1),
       'n11': const Color(0xFF673AB7),
       'ups': const Color(0xFF37474F),
@@ -330,7 +331,7 @@ class SearchBar extends StatelessWidget {
               )
             : null,
         filled: true,
-        fillColor: Colors.grey[100],
+        fillColor: context.colorScheme.surfaceContainerHighest,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppConstants.defaultBorderRadius),
@@ -374,13 +375,13 @@ class FilterChips extends StatelessWidget {
             selectedColor: context.colorScheme.primary.withValues(alpha: 0.1),
             checkmarkColor: context.colorScheme.primary,
             labelStyle: context.textTheme.labelMedium?.copyWith(
-              color: isSelected ? context.colorScheme.primary : Colors.grey[700],
+              color: isSelected ? context.colorScheme.primary : context.colorScheme.onSurfaceVariant,
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
             ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
               side: BorderSide(
-                color: isSelected ? context.colorScheme.primary : Colors.grey[300]!,
+                color: isSelected ? context.colorScheme.primary : context.colorScheme.outline,
               ),
             ),
           );

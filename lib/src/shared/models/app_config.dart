@@ -88,8 +88,17 @@ class AppConfig {
 
   /// Get update type based on current version
   UpdateType get updateType {
+    // 1. Minimum version check always forces update
     if (isForceUpdateRequired) return UpdateType.force;
+    
+    // 2. If force_update flag is enabled and a newer version exists, force it
+    if (forceUpdate && hasOptionalUpdate) {
+      return UpdateType.force;
+    }
+    
+    // 3. Optional update if newer version exists
     if (hasOptionalUpdate) return UpdateType.optional;
+    
     return UpdateType.none;
   }
 }

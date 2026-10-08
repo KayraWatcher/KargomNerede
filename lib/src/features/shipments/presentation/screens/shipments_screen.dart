@@ -128,13 +128,13 @@ class ShipmentsScreen extends ConsumerWidget {
             selectedColor: context.colorScheme.primary.withValues(alpha: 0.1),
             checkmarkColor: context.colorScheme.primary,
             labelStyle: context.textTheme.labelMedium?.copyWith(
-              color: isSelected ? context.colorScheme.primary : Colors.grey[700],
+              color: isSelected ? context.colorScheme.primary : context.colorScheme.onSurfaceVariant,
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
             ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
               side: BorderSide(
-                color: isSelected ? context.colorScheme.primary : Colors.grey[300]!,
+                color: isSelected ? context.colorScheme.primary : context.colorScheme.outline,
               ),
             ),
           );
@@ -403,7 +403,7 @@ class _CustomSearchField extends StatelessWidget {
               )
             : null,
         filled: true,
-        fillColor: Colors.grey[100],
+        fillColor: context.colorScheme.surfaceContainerHighest,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppConstants.defaultBorderRadius),
@@ -411,7 +411,7 @@ class _CustomSearchField extends StatelessWidget {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppConstants.defaultBorderRadius),
-          borderSide: BorderSide(color: Colors.grey[300]!),
+          borderSide: BorderSide(color: context.colorScheme.outline),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppConstants.defaultBorderRadius),
@@ -423,7 +423,7 @@ class _CustomSearchField extends StatelessWidget {
         ),
         disabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppConstants.defaultBorderRadius),
-          borderSide: BorderSide(color: Colors.grey[300]!, width: 1),
+          borderSide: BorderSide(color: context.colorScheme.outline, width: 1),
         ),
       ),
       style: const TextStyle(
@@ -553,7 +553,7 @@ class _ShipmentCard extends ConsumerWidget {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.grey[100],
+                          color: context.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(

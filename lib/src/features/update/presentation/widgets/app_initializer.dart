@@ -69,10 +69,8 @@ class _AppInitializerState extends ConsumerState<AppInitializer> {
     final checkResult = ref.watch(forceUpdateCheckProvider);
 
     return checkResult.when(
-      loading: () => const _LoadingScreen(),
-      error: (error, stack) => _LoadingScreen(
-        error: 'Yapılandırma yüklenemedi: ${error.toString()}',
-      ),
+      loading: () => widget.child,
+      error: (error, stack) => widget.child,
       data: (result) {
         if (result.shouldForceUpdate) {
           return const ForceUpdateScreen();

@@ -12,7 +12,7 @@ import '../../shared/widgets/common_widgets.dart';
 import '../../core/constants/app_constants.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
-  final onboardingCompletedAsync = ref.watch(_onboardingCompletedProvider);
+  final onboardingCompletedAsync = ref.watch(onboardingCompletedProvider);
   
   return GoRouter(
     initialLocation: '/onboarding',
@@ -113,7 +113,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 });
 
 // Onboarding completion provider
-final _onboardingCompletedProvider = FutureProvider<bool>((ref) async {
+final onboardingCompletedProvider = FutureProvider.autoDispose<bool>((ref) async {
   final prefs = await SharedPreferences.getInstance();
   return prefs.getBool(AppConstants.keyOnboardingCompleted) ?? false;
 });
