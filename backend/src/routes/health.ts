@@ -3,8 +3,12 @@ import { asyncHandler } from '../middleware/errorHandler';
 
 export const healthRoutes = Router();
 
+// Liveness probe for Render (healthCheckPath: /health).
+// Deliberately minimal: no configuration, provider names or secrets here.
 healthRoutes.get('/', asyncHandler(async (req: Request, res: Response) => {
   res.json({
+    ok: true,
+    service: 'kargomnerede-backend',
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
@@ -14,17 +18,18 @@ healthRoutes.get('/', asyncHandler(async (req: Request, res: Response) => {
 }));
 
 healthRoutes.get('/ready', asyncHandler(async (req: Request, res: Response) => {
-  // Check database, redis, external services
+  // Honest readiness: only things this process actually controls.
+  // A missing tracking provider key does NOT make the service unready -
+  // tracking requests fail explicitly with PROVIDER_NOT_CONFIGURED instead.
   const checks = {
-    database: 'ok', // await checkDatabase()
-    redis: 'ok',    // await checkRedis()
-    tracking: 'ok', // await checkTrackingProviders()
+    process: 'ok',
+    trackingProvider: process.env.TRACKING_PROVIDER?.trim()
+      ? 'configured'
+      : 'not_configured',
   };
-  
-  const allHealthy = Object.values(checks).every(v => v === 'ok');
-  
-  res.status(allHealthy ? 200 : 503).json({
-    status: allHealthy ? 'ready' : 'not ready',
+
+  res.json({
+    status: 'ready',
     checks,
   });
 }));

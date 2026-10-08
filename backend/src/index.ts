@@ -20,9 +20,28 @@ app.use(helmet({
 }));
 
 // CORS
+//
+// The Flutter app is not a browser and does not enforce CORS, so this
+// configuration can never break it: clients without an Origin header
+// (Flutter, curl, server-to-server) are always accepted. Browser access is
+// limited to an explicit allowlist - set CORS_ORIGIN (comma separated, e.g.
+// "https://kargomnerede.com") for a future web client; with an empty list
+// no browser origin gets CORS headers. The API uses no cookies, so
+// credentials stay disabled (no wildcard+credentials mix).
+const allowedOrigins = (process.env.CORS_ORIGIN ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true,
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true); // non-browser client
+      return;
+    }
+    callback(null, allowedOrigins.includes(origin));
+  },
+  credentials: false,
 }));
 
 // Body parsing

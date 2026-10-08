@@ -83,6 +83,17 @@ class CarrierDetectionService {
       priority: 75,
     },
     {
+      code: 'hepsijet',
+      name: 'HepsiJet',
+      patterns: [
+        /^HJ\d{10,14}$/i,        // HJ + 10-14 digits
+        /^HEPSIJET\d{6,14}$/i,   // HEPSIJET + 6-14 digits
+      ],
+      country: 'TR',
+      isTurkish: true,
+      priority: 72,
+    },
+    {
       code: 'hepsiburada',
       name: 'Hepsiburada Lojistik',
       patterns: [
@@ -229,23 +240,44 @@ class CarrierDetectionService {
     this.carriers.sort((a, b) => b.priority - a.priority);
   }
 
-  detectCarrier(trackingNumber: string): string | null {
+  /**
+   * Returns every carrier whose patterns match the tracking number, ordered
+   * by priority (highest first).
+   *
+   * The number of matches is what matters: plain digit formats overlap
+   * heavily (a 13-digit number matches Yurtiçi, Aras, PTT and FedEx; a
+   * 10-digit number matches MNG, Aras, Sürat and DHL), so the format alone
+   * often cannot say who the sender is.
+   */
+  detectCarrierCandidates(trackingNumber: string): string[] {
     const cleanNumber = trackingNumber.trim().toUpperCase().replace(/\s+/g, '');
-    
+
     if (cleanNumber.length < 5 || cleanNumber.length > 50) {
-      return null;
+      return [];
     }
 
-    // Carriers are already sorted by priority
+    const candidates: string[] = [];
     for (const carrier of this.carriers) {
-      for (const pattern of carrier.patterns) {
-        if (pattern.test(cleanNumber)) {
-          return carrier.code;
-        }
+      if (carrier.patterns.some(pattern => pattern.test(cleanNumber))) {
+        candidates.push(carrier.code);
       }
     }
+    return candidates;
+  }
 
-    return null;
+  /**
+   * Returns the carrier only when the format matches EXACTLY ONE known
+   * carrier.
+   *
+   * Ambiguous numbers (several matches) return `null`: resolving them by
+   * priority order would silently guess between Yurtiçi/Aras/PTT/... and put
+   * the shipment in the wrong carrier's timeline. Callers must ask the
+   * tracking provider instead, or report "carrier not detected" and let the
+   * user choose.
+   */
+  detectCarrier(trackingNumber: string): string | null {
+    const candidates = this.detectCarrierCandidates(trackingNumber);
+    return candidates.length === 1 ? candidates[0] : null;
   }
 
   getSupportedCarriers(): CarrierInfo[] {

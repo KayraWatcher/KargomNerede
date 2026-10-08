@@ -309,7 +309,8 @@ class NotificationService {
     };
 
     const type = typeMap[event.status] || 'new_movement';
-    const prefs = await this.getPreferences(userId);
+    const prefs = await this.getPreferences(userId) as NotificationPreferences &
+      Record<string, boolean | undefined>;
 
     // Check if this type is enabled
     if (!prefs.enabled || !prefs[type === 'arrived_at_facility' ? 'arrivedAtFacility' : type.replace('_', '')]) {

@@ -33,6 +33,8 @@ export interface ProviderStatus {
     reset: number;
   };
   lastCheck: string;
+  /** Extra diagnostics, e.g. why a configured provider is unavailable. */
+  detail?: string;
 }
 
 class TrackingService {
@@ -69,16 +71,77 @@ class TrackingService {
         name: 'Ship24',
         track: this.trackShip24.bind(this),
         getStatus: this.getShip24Status.bind(this),
+        // Ship24's search endpoint identifies the courier from the tracking
+        // number alone, so it is the adapter that can answer provider-side
+        // carrier detection.
+        detectCarrier: this.detectCarrierShip24.bind(this),
       });
     }
 
-    // Default to mock provider for development
-    if (this.providers.size === 0) {
+    // Development only: the mock provider is never registered implicitly.
+    // Without a configured provider the API fails loudly
+    // (503 PROVIDER_NOT_CONFIGURED) instead of returning random data that
+    // looks like a real shipment. Opt in explicitly with TRACKING_PROVIDER=mock.
+    if (process.env.TRACKING_PROVIDER === 'mock') {
       this.providers.set('mock', {
         name: 'Mock Provider (Development)',
         track: this.trackMock.bind(this),
         getStatus: this.getMockStatus.bind(this),
       });
+    }
+  }
+
+  /**
+   * The provider selected through TRACKING_PROVIDER. Throws 503 when nothing
+   * is configured or the selected provider has no API key, so callers (and
+   * clients) see a clear configuration error instead of fake data.
+   */
+  private requireProvider(): TrackingProvider {
+    const providerName = process.env.TRACKING_PROVIDER?.trim();
+
+    if (!providerName) {
+      throw new AppError(
+        503,
+        'Tracking provider is not configured. Set TRACKING_PROVIDER and the matching API key (see backend/.env.example).',
+        'PROVIDER_NOT_CONFIGURED'
+      );
+    }
+
+    const provider = this.providers.get(providerName);
+    if (!provider) {
+      throw new AppError(
+        503,
+        `Tracking provider "${providerName}" is not available. Check TRACKING_PROVIDER and its API key (see backend/.env.example).`,
+        'PROVIDER_UNAVAILABLE'
+      );
+    }
+
+    return provider;
+  }
+
+  /**
+   * Asks the configured provider to identify the carrier of a tracking
+   * number (used when the number's format is ambiguous, e.g. plain 13-digit
+   * numbers that match several Turkish carriers at once).
+   *
+   * Returns `null` when the provider cannot tell - adapters that require an
+   * explicit carrier simply do not implement `detectCarrier`. Throws 503 when
+   * no provider/API key is configured.
+   */
+  async detectCarrierByProvider(trackingNumber: string): Promise<string | null> {
+    const provider = this.requireProvider();
+    if (!provider.detectCarrier) {
+      return null;
+    }
+    try {
+      const code = await provider.detectCarrier(trackingNumber);
+      const trimmed = code?.trim();
+      return trimmed ? trimmed : null;
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      // Provider could not identify the carrier: report "not detected"
+      // instead of guessing.
+      return null;
     }
   }
 
@@ -90,12 +153,7 @@ class TrackingService {
       return cached.data;
     }
 
-    const providerName = process.env.TRACKING_PROVIDER || 'mock';
-    const provider = this.providers.get(providerName);
-    
-    if (!provider) {
-      throw new AppError(503, `Tracking provider ${providerName} not available`, 'PROVIDER_UNAVAILABLE');
-    }
+    const provider = this.requireProvider();
 
     try {
       const result = await provider.track(trackingNumber, carrierCode);
@@ -109,12 +167,45 @@ class TrackingService {
       return result;
     } catch (error) {
       if (error instanceof AppError) throw error;
-      throw new AppError(500, `Tracking failed: ${error.message}`, 'TRACKING_FAILED');
+      // A real provider failure must surface as a real error - never as
+      // fake success - but raw provider payloads/messages are not echoed
+      // back (they can contain request details); only the HTTP status is.
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        if (status === 401 || status === 403) {
+          throw new AppError(
+            502,
+            `Tracking provider rejected the configured API key (HTTP ${status})`,
+            'PROVIDER_AUTH_FAILED'
+          );
+        }
+        if (status === 429) {
+          throw new AppError(
+            429,
+            'Tracking provider rate limit exceeded (HTTP 429)',
+            'PROVIDER_RATE_LIMITED'
+          );
+        }
+        if (status !== undefined) {
+          throw new AppError(
+            502,
+            `Tracking provider request failed (HTTP ${status})`,
+            'PROVIDER_ERROR'
+          );
+        }
+        throw new AppError(
+          502,
+          'Tracking provider is unreachable',
+          'PROVIDER_UNREACHABLE'
+        );
+      }
+      throw new AppError(502, 'Tracking provider request failed', 'PROVIDER_ERROR');
     }
   }
 
   async getProviderStatus(): Promise<ProviderStatus[]> {
     const statuses: ProviderStatus[] = [];
+    const now = new Date().toISOString();
     
     for (const [key, provider] of this.providers) {
       try {
@@ -124,11 +215,31 @@ class TrackingService {
         statuses.push({
           name: provider.name,
           available: false,
-          lastCheck: new Date().toISOString(),
+          lastCheck: now,
+          detail: 'Provider status check failed',
         });
       }
     }
-    
+
+    // Make the configuration state visible instead of silently reporting an
+    // empty (or mock) provider list.
+    const selected = process.env.TRACKING_PROVIDER?.trim();
+    if (!selected) {
+      statuses.push({
+        name: 'TRACKING_PROVIDER',
+        available: false,
+        lastCheck: now,
+        detail: 'Not configured - set TRACKING_PROVIDER and its API key (see backend/.env.example)',
+      });
+    } else if (!this.providers.has(selected)) {
+      statuses.push({
+        name: selected,
+        available: false,
+        lastCheck: now,
+        detail: 'Selected in TRACKING_PROVIDER but not available - its API key is missing (see backend/.env.example)',
+      });
+    }
+
     return statuses;
   }
 
@@ -258,6 +369,28 @@ class TrackingService {
     return this.normalizeShip24Response(response.data, trackingNumber, carrierCode);
   }
 
+  /**
+   * Provider-side carrier detection (Ship24 search without a courier filter).
+   * Returns Ship24's own courier slug - if it is not one of our carrier codes
+   * the caller treats the result as "not detected" rather than guessing.
+   */
+  private async detectCarrierShip24(trackingNumber: string): Promise<string | null> {
+    const response = await axios.post(
+      'https://api.ship24.com/public/v1/tracking/search',
+      { trackingNumber },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.TRACKING_SHIP24_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const courier = response.data?.data?.trackings?.[0]?.courier;
+    const slug = courier?.slug ?? courier?.code;
+    return typeof slug === 'string' && slug.trim().length > 0 ? slug.trim() : null;
+  }
+
   private async getShip24Status(): Promise<ProviderStatus> {
     return { name: 'Ship24', available: true, lastCheck: new Date().toISOString() };
   }
@@ -279,7 +412,9 @@ class TrackingService {
 
     return {
       trackingNumber,
-      carrierCode,
+      // With no explicit carrier (auto-detection path) fall back to the
+      // courier the provider itself identified.
+      carrierCode: carrierCode || tracking.courier?.slug || '',
       carrierName: tracking.courier?.name || carrierCode,
       status: this.mapShip24Status(tracking.status),
       statusDescription: tracking.statusDescription || '',
@@ -396,6 +531,12 @@ interface TrackingProvider {
   name: string;
   track: (trackingNumber: string, carrierCode: string) => Promise<TrackingResult>;
   getStatus: () => Promise<ProviderStatus>;
+  /**
+   * Optional provider-side carrier detection: identify the carrier from the
+   * tracking number alone. Only implemented by adapters whose API supports it
+   * (Ship24); the others require an explicit carrierCode.
+   */
+  detectCarrier?: (trackingNumber: string) => Promise<string | null>;
 }
 
 export const trackingService = new TrackingService();

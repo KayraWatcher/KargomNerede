@@ -38,7 +38,7 @@ class WebhookService {
     await this.processTrackingUpdate({
       trackingNumber: tracking.tracking_number,
       carrierCode: tracking.slug,
-      status: this.mapAfterShipStatus(tagging.tag),
+      status: this.mapAfterShipStatus(tracking.tagging?.tag ?? tracking.tag ?? ''),
       description: tracking.checkpoints?.[0]?.message,
       location: tracking.checkpoints?.[0]?.location,
       timestamp: tracking.updated_at,

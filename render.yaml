@@ -1,0 +1,31 @@
+# Render blueprint - Kargom Nerede backend (Node web service).
+#
+# The backend lives in the backend/ subdirectory, so the commands cd into
+# it. No Docker needed: plain Node + TypeScript build.
+# Deploy: push this repo to GitHub -> Render -> New -> Blueprint
+# (or New -> Web Service with the same commands).
+#
+# Secrets (API keys) are NEVER stored here: TRACKING_SHIP24_API_KEY uses
+# `sync: false` and must be filled in the Render dashboard.
+services:
+  - type: web
+    name: kargomnerede-backend
+    runtime: node
+    # --include=dev: tsc lives in devDependencies and must exist during the
+    # build even when NODE_ENV=production is already set for the service.
+    buildCommand: cd backend && npm install --include=dev && npm run build
+    startCommand: cd backend && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Real tracking provider. The app never talks to a mock: without the
+      # key below, tracking endpoints answer 503 PROVIDER_NOT_CONFIGURED.
+      - key: TRACKING_PROVIDER
+        value: ship24
+      - key: TRACKING_SHIP24_API_KEY
+        sync: false
+      # Browser allowlist for a future web client (comma separated).
+      # The Flutter app is not a browser and does not need CORS.
+      - key: CORS_ORIGIN
+        value: https://kargomnerede.com

@@ -1,13 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 
-export const requestLogger = (req: Request, res: Response, next: NextFunction) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log(`${req.method} ${req.path} ${res.statusCode} ${duration}ms`);
-  });
-  next();
-};
+// NOTE: request logging lives in ./requestLogger (used by index.ts); the
+// duplicate definition that used to be here was dead code.
 
 export class AppError extends Error {
   constructor(
@@ -33,13 +28,28 @@ export const errorHandler = (err: Error, req: Request, res: Response, next: Next
     });
   }
 
-  // Zod validation errors
-  if (err.name === 'ZodError') {
+  // Zod validation errors (only field paths/messages - no secrets)
+  if (err instanceof ZodError) {
     return res.status(400).json({
       error: 'ValidationError',
       message: 'Invalid request data',
       code: 'VALIDATION_ERROR',
-      details: err.errors,
+      details: err.issues,
+    });
+  }
+
+  // Express/body-parser client errors (malformed JSON, payload too large,
+  // unsupported media type, ...). These carry their own 4xx status and must
+  // not be reported as server errors.
+  const httpStatus = (err as any).statusCode ?? (err as any).status;
+  if (typeof httpStatus === 'number' && httpStatus >= 400 && httpStatus < 500) {
+    return res.status(httpStatus).json({
+      error: err.name,
+      message:
+        (err as any).type === 'entity.parse.failed'
+          ? 'Invalid JSON in request body'
+          : err.message,
+      code: httpStatus === 413 ? 'PAYLOAD_TOO_LARGE' : 'BAD_REQUEST',
     });
   }
 
@@ -53,6 +63,22 @@ export const errorHandler = (err: Error, req: Request, res: Response, next: Next
   });
 };
 
-export const asyncHandler = (fn: Function) => (req: Request, res: Response, next: NextFunction) => {
-  Promise.resolve(fn(req, res, next)).catch(next);
-};
+/**
+ * Route handler wrapper: rejects surface in the error handler above instead
+ * of crashing the process.
+ *
+ * The parameter types give route callbacks an explicit `Request`/`Response`
+ * context (previously `fn: Function` left every `req`/`res` untyped, which
+ * broke `tsc` under `strict`).
+ */
+export type AsyncRequestHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => Promise<unknown> | unknown;
+
+export const asyncHandler =
+  (fn: AsyncRequestHandler) =>
+  (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
